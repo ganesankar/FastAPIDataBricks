@@ -78,11 +78,15 @@ def update_table_schema(table_name, new_columns):
     try:
         with get_databricks_connection() as conn:
             with conn.cursor() as cursor:
-            for col in new_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} STRING")
-                except Exception as e:
-                    print(f"Error adding column {col}: {e}")
+                for col in new_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} STRING")
+                    except Exception as e:
+                        print(f"Error adding column {col}: {e}")
+        return True
+    except Exception as e:
+        print(f"Error in update_table_schema: {e}")
+        return False
 
 @app.get("/read_csv")
 async def read_csv_from_s3(file_path: str= "customers-100.csv", target_table: str = "workspace.default.customers"):
