@@ -141,6 +141,17 @@ async def read_csv_from_s3(file_path: str= "customers-100.csv", target_table: st
             except Exception as update_error:
                 print(f"Schema Update Error: {str(update_error)}")
                 # Log the error but don't stop the process
+                # Insert data from CSV to table
+        try:
+            with get_databricks_connection() as conn:
+                with conn.cursor() as cursor:
+                    for index, row in df.iterrows():
+                        cols = ', '.join(row.keys())
+                        vals = ', '.join([f"'{val}'" for val in row.values])
+                        cursor.execute(f"INSERT INTO {target_table} ({cols}) VALUES ({vals})")
+                    conn.commit()
+        except Exception as insert_error:
+            print(f"Error inserting data into table: {str(insert_error)}")
         
         return {
             "data": df.to_dict(orient='records'),
