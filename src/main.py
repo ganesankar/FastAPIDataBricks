@@ -37,6 +37,12 @@ def get_s3_client():
 def get_databricks_connection():
     """Create and return a Databricks SQL connection."""
     try:
+        # Print connection details for debugging
+        print(f"Connecting to Databricks with:")
+        print(f"Host: {DATABRICKS_HOST}")
+        print(f"HTTP Path: {DATABRICKS_HTTP_PATH}")
+        print(f"Token: {DATABRICKS_TOKEN[:5]}...{DATABRICKS_TOKEN[-5:]}")
+        
         conn = connect(
             server_hostname=DATABRICKS_HOST.replace('https://', ''),
             http_path=DATABRICKS_HTTP_PATH,
@@ -44,20 +50,34 @@ def get_databricks_connection():
         )
         return conn
     except Exception as e:
+        # Log the full error details
+        import traceback
+        print(f"Databricks Connection Error: {str(e)}")
+        print("Traceback:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error connecting to Databricks: {str(e)}")
 
 def get_table_schema(table_name):
     """Retrieve the schema of a Databricks table."""
-    with get_databricks_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(f"DESCRIBE TABLE {table_name}")
-            schema = cursor.fetchall()
-            return [col[0] for col in schema]
+    try:
+        with get_databricks_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"DESCRIBE TABLE {table_name}")
+                schema = cursor.fetchall()
+                return [col[0] for col in schema]
+    except Exception as e:
+        # Log the full error details
+        import traceback
+        print(f"Error retrieving table schema: {str(e)}")
+        print("Traceback:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving table schema: {str(e)}")
 
 def update_table_schema(table_name, new_columns):
     """Update the schema of a Databricks table by adding missing columns."""
-    with get_databricks_connection() as conn:
-        with conn.cursor() as cursor:
+    try:
+        with get_databricks_connection() as conn:
+            with conn.cursor() as cursor:
             for col in new_columns:
                 try:
                     cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} STRING")
@@ -65,7 +85,7 @@ def update_table_schema(table_name, new_columns):
                     print(f"Error adding column {col}: {e}")
 
 @app.get("/read_csv")
-async def read_csv_from_s3(file_path: str, target_table: str = "workspace.default.customers"):
+async def read_csv_from_s3(file_path: str= "customers-100.csv", target_table: str = "workspace.default.customers"):
     """
     Read a CSV file from S3, compare its schema with a Databricks table,
     and update the table schema if needed.
@@ -80,23 +100,43 @@ async def read_csv_from_s3(file_path: str, target_table: str = "workspace.defaul
         
         # Download the file to a temporary location
         local_file_path = os.path.basename(file_path)
-        s3_client.download_file(S3_BUCKET, file_path, local_file_path)
+        try:
+            s3_client.download_file(S3_BUCKET, file_path, local_file_path)
+        except Exception as s3_error:
+            print(f"S3 Download Error: {str(s3_error)}")
+            raise HTTPException(status_code=404, detail=f"Could not download file from S3: {str(s3_error)}")
         
-        # Read CSV using pandas
-        df = pd.read_csv(local_file_path)
+        try:
+            # Read CSV using pandas
+            df = pd.read_csv(local_file_path)
+        except Exception as csv_error:
+            print(f"CSV Read Error: {str(csv_error)}")
+            raise HTTPException(status_code=400, detail=f"Could not read CSV file: {str(csv_error)}")
+        finally:
+            # Always attempt to remove the temporary file
+            try:
+                os.remove(local_file_path)
+            except Exception as remove_error:
+                print(f"Error removing temporary file: {str(remove_error)}")
         
-        # Remove the temporary file
-        os.remove(local_file_path)
-        
-        # Get current table schema from Databricks
-        current_schema = get_table_schema(target_table)
+        try:
+            # Get current table schema from Databricks
+            current_schema = get_table_schema(target_table)
+        except Exception as schema_error:
+            print(f"Schema Retrieval Error: {str(schema_error)}")
+            # Continue with an empty schema if retrieval fails
+            current_schema = []
         
         # Find missing columns
         missing_columns = [col for col in df.columns if col not in current_schema]
         
         # Update table schema if needed
         if missing_columns:
-            update_table_schema(target_table, missing_columns)
+            try:
+                update_table_schema(target_table, missing_columns)
+            except Exception as update_error:
+                print(f"Schema Update Error: {str(update_error)}")
+                # Log the error but don't stop the process
         
         return {
             "data": df.to_dict(orient='records'),
@@ -106,8 +146,15 @@ async def read_csv_from_s3(file_path: str, target_table: str = "workspace.defaul
             "total_rows": len(df)
         }
     
+    except HTTPException:
+        # Re-raise HTTPException to preserve its details
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
+        # Catch any unexpected errors
+        import traceback
+        print(f"Unexpected Error: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Unexpected error processing CSV: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
