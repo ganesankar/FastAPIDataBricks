@@ -171,6 +171,41 @@ async def read_csv_from_s3(file_path: str= "customers-100.csv", target_table: st
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Unexpected error processing CSV: {str(e)}")
 
+@app.get("/read_table_data")
+async def read_table_data(table_name: str, limit: int = 100):
+    """
+    Read data from a specified SQL table in Databricks.
+    
+    :param table_name: Fully qualified table name to read from
+    :param limit: Maximum number of rows to return (default: 100)
+    :return: Table data, columns, and row count
+    """
+    try:
+        with get_databricks_connection() as conn:
+            with conn.cursor() as cursor:
+                # Execute query to get table data
+                cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+                
+                # Fetch column names
+                columns = [desc[0] for desc in cursor.description]
+                
+                # Fetch data
+                rows = cursor.fetchall()
+                
+                # Convert rows to list of dictionaries
+                data = [dict(zip(columns, row)) for row in rows]
+                
+                return {
+                    "data": data,
+                    "columns": columns,
+                    "total_rows": len(data)
+                }
+    except Exception as e:
+        import traceback
+        print(f"Error reading table data: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error reading table data: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
